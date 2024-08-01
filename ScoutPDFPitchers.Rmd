@@ -1,0 +1,254 @@
+---
+title: "ScoutPDFPitchers"
+author: "Sean McGarry"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyr)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(DT)
+library(scales)
+library(readr)
+library(xtable)
+library(ggpubr)
+```
+
+```{r, echo = False}
+setwd("~/Desktop/Wareham/Data")
+
+csv <- read.csv("all_games.csv") 
+
+setwd("~/Desktop/Wareham/Shiny")
+
+# Replace "TwoSeamFastball" or "FourSeamFastball" with "Fastball"
+df <- csv %>%
+  mutate(TaggedPitchType = ifelse(TaggedPitchType %in% c("TwoSeamFastBall", "FourSeamFastBall"), 
+                                  "Fastball", TaggedPitchType))
+
+# Remove rows where "TaggedPitchType" is "Other" or "Undefined
+df2 <- df %>%
+  filter(TaggedPitchType != "Other")
+df3 <- df2 %>%
+  filter(TaggedPitchType != "Undefined")
+
+# Convert the date_column to Date format
+df3$Date <- as.Date(df3$Date)
+
+df4 <- df3 %>% 
+  mutate(RelHeight = as.double(substr(RelHeight, 1, nchar(RelHeight))), 
+         Balls = as.double(substr(Balls, 1, nchar(Balls))), 
+         Strikes = as.double(substr(Strikes, 1, nchar(Strikes))))
+
+BACON <- read.csv("xwOBAcon.csv")
+
+df4$Count <- paste(df4$Balls, df4$Strikes, sep = "-")
+
+# Checks and CSV adjustments
+Checker <- df4 %>%
+  mutate(HitCheck = case_when(PlayResult %in% c('Single', 'Double', 'Triple', 'HomeRun') ~ TRUE, TRUE ~ FALSE),
+         FastballCheck = if_else(TaggedPitchType == "Fastball", T, F),
+         SinkerCheck = if_else(TaggedPitchType == "Sinker", T, F),
+         ChangeUpCheck = if_else(TaggedPitchType == "ChangeUp", T, F),
+         CutterCheck = if_else(TaggedPitchType == "Cutter", T, F),
+         SliderCheck = if_else(TaggedPitchType == "Slider", T, F),
+         CurveballCheck = if_else(TaggedPitchType == "Curveball", T, F),
+         SplitterCheck = if_else(TaggedPitchType == "Splitter", T, F),
+         GBCheck = case_when(TaggedHitType %in% c('GroundBall') ~ TRUE, TRUE ~ FALSE),
+         BattedBallCheck = case_when(TaggedHitType %in% c('GroundBall', 'LineDrive', 'FlyBall', 'Popup') ~ TRUE, TRUE ~ FALSE), 
+         CSWCheck = case_when(PitchCall %in% c('StrikeSwinging','StrikeCalled') ~ TRUE, TRUE ~ FALSE),
+         StrikeCheck = case_when(PitchCall %in% c('StrikeSwinging', 'FoulBall', 'InPlay','StrikeCalled') ~ TRUE, TRUE ~ FALSE),
+         ZoneCheck = case_when(between(PlateLocHeight, 1.59, 3.41) & between(PlateLocSide, -1, 1) ~ TRUE, TRUE ~ FALSE),
+         SweetSpotCheck = case_when(between(Angle, 10, 30) ~ TRUE, TRUE ~ FALSE),
+         HardHitCheck = case_when(between(ExitSpeed, 95, 120) ~ TRUE, TRUE ~ FALSE),
+         BarrelCheck = case_when(between(Angle, 10, 30)  & between(ExitSpeed, 95, 120) ~ TRUE, TRUE ~ FALSE),
+         WhiffCheck = case_when(PitchCall %in% c('StrikeSwinging') ~ TRUE, TRUE ~ FALSE),
+         SwingCheck = case_when(PitchCall %in% c('StrikeSwinging', 'InPlay','FoulBall') ~ TRUE, TRUE ~ FALSE),
+         CalledStrikeCheck = case_when(PitchCall %in% c('StrikeCalled') ~ TRUE, TRUE ~ FALSE),
+         BallCheck = case_when(PitchCall %in% c('BallCalled', 'HitByPitch') ~ TRUE, TRUE ~ FALSE),
+         FoulCheck = case_when(PitchCall %in% c('FoulBall') ~ TRUE, TRUE ~ FALSE),
+         SingleCheck = case_when(PlayResult %in% c('Single') ~ TRUE, TRUE ~ FALSE),
+         DoubleCheck = case_when(PlayResult %in% c('Double') ~ TRUE, TRUE ~ FALSE),
+         TripleCheck = case_when(PlayResult %in% c('Triple') ~ TRUE, TRUE ~ FALSE),
+         HRCheck = case_when(PlayResult %in% c('HomeRun') ~ TRUE, TRUE ~ FALSE),
+         SacCheck = case_when(PlayResult %in% c('Sacrifice') ~ TRUE, TRUE ~ FALSE),
+         HBPCheck = case_when(PitchCall %in% c('HitByPitch') ~ TRUE, TRUE ~ FALSE),
+         StrikeoutCheck = case_when(KorBB == c('Strikeout') ~ TRUE, TRUE ~ FALSE),
+         WalkCheck = case_when(KorBB %in% c('Walk') ~ TRUE, TRUE ~ FALSE),
+         BIPCheck = case_when(PlayResult %in% c('Undefined') ~ FALSE, TRUE ~ TRUE), 
+         ErrorCheck = if_else(PlayResult %in% c('Error'), TRUE, FALSE),
+         ABCheck = StrikeoutCheck + BIPCheck - SacCheck,
+         BFCheck = StrikeoutCheck + WalkCheck + HBPCheck + BIPCheck
+         )
+
+baconcsv <- Checker %>% 
+  mutate(floorExitSpeed = floor(ExitSpeed),
+         floorLaunchAngle = trunc(Angle),) %>% 
+  left_join(BACON, by = c("floorExitSpeed" = "launch_speed", 
+                          "floorLaunchAngle" = "launch_angle"))
+
+final <- baconcsv %>%
+  mutate(across("av_xwOBAcon", ~replace_na(., 0)),
+         xwOBAvalues = av_xwOBAcon + WalkCheck * 0.83 + HBPCheck * 0.86 + StrikeoutCheck * 0)
+
+final$Date <- as.Date(final$Date, "%Y-%m-%d")
+
+final$PitchCount <- 0
+for (i in 1:nrow(final)) {final$PitchCount[i] <- sum(final$Pitcher[1:i] == final$Pitcher[i])}
+
+```
+
+## Change
+
+```{r}
+pitcher_name = "Williams, Andrew"
+
+date = Sys.Date()
+
+team_name = "Chatham"
+
+pitcher_last_name <- str_trim(str_extract(pitcher_name, "^[^,]+"))
+
+#Run once
+dir.create(paste0("~/Desktop/Wareham/Scouting/ScoutReports/", team_name), recursive = TRUE)
+
+filtered = final %>%
+  filter(Pitcher == pitcher_name)
+
+# Usage Table by Batter Side
+usage_table_side <- filtered %>%
+  group_by(Side = BatterSide) %>%
+  summarize(
+    Pitches = n(),
+    Fastball = mean(FastballCheck, na.rm = TRUE), 
+    Sinker = mean(SinkerCheck, na.rm = TRUE),
+    Slider = mean(SliderCheck, na.rm = TRUE),
+    Cutter = mean(CutterCheck, na.rm = TRUE),
+    ChangeUp = mean(ChangeUpCheck, na.rm = TRUE),
+    Curveball = mean(CurveballCheck, na.rm = TRUE),
+    Splitter = mean(SplitterCheck, na.rm = TRUE)
+  ) %>%
+  mutate(across(c(Fastball, Sinker, Slider, Cutter, ChangeUp, Curveball, Splitter), 
+                ~ percent(., accuracy = 0.1))) 
+
+# Summary Table
+summary_table <- filtered %>%
+  summarize(
+    Pitches = n(),
+    BF = sum(BFCheck, na.rm = TRUE), 
+    BBE = sum(BattedBallCheck, na.rm = TRUE),
+    H = sum(HitCheck, na.rm = TRUE), 
+    `1B` = sum(SingleCheck, na.rm = TRUE), 
+    `2B` = sum(DoubleCheck, na.rm = TRUE), 
+    `3B` = sum(TripleCheck, na.rm = TRUE), 
+    HR = sum(HRCheck, na.rm = TRUE), 
+    SO = sum(StrikeoutCheck, na.rm = TRUE), 
+    BB = sum(WalkCheck, na.rm = TRUE), 
+    HBP = sum(HBPCheck, na.rm = TRUE),
+    Strikes = sum(StrikeCheck, na.rm = TRUE), 
+    Chases = sum(SwingCheck[!ZoneCheck], na.rm = TRUE), 
+    Whiffs = sum(WhiffCheck[SwingCheck], na.rm = TRUE)
+  )
+
+# Pitcher Summary Table by Pitch Type
+pitch_types_table <- filtered %>%
+  group_by(Pitch = TaggedPitchType) %>%
+  summarize(
+    Pitches = n(),
+    AvgVelo = round(mean(RelSpeed, na.rm = TRUE), 1), 
+    MaxVelo = round(max(RelSpeed, na.rm = TRUE), 1), 
+    SpinRate = round(mean(SpinRate, na.rm = TRUE), 0),
+    IVB = round(mean(InducedVertBreak, na.rm = TRUE), 1),
+    HB = round(mean(HorzBreak, na.rm = TRUE), 1),
+    RelZ = round(mean(RelHeight, na.rm = TRUE), 1),
+    RelX = round(mean(RelSide, na.rm = TRUE), 1),
+    Extension = round(mean(Extension, na.rm = TRUE), 2)
+  ) %>%
+  mutate(Usage = percent(Pitches / sum(Pitches), accuracy = 0.1)) %>%
+  arrange(desc(Pitches))
+
+
+movement = ggplot(data = filter(final, Pitcher == pitcher_name), aes(x = HorzBreak, y = InducedVertBreak, color = TaggedPitchType)) + 
+      labs(x = "Horizontal Movement (HB)", y = "Vertical Movement (IVB)", color = "Pitch Type", title = "Pitch Movement") + 
+      xlim(-30, 30) + ylim(-30, 30) +
+      geom_segment(aes(x = 0, y = -25, xend = 0, yend = 25), size = 1, color = "grey55") + 
+      geom_segment(aes(x = -25, y = 0, xend = 25, yend = 0), size = 1, color = "grey55") +
+      geom_point(size = 3, na.rm = TRUE) +
+      theme_bw() + theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+      theme(legend.position = "bottom", legend.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+      coord_fixed(ratio = 1)
+
+advanced <- filter(final, Pitcher == pitcher_name) %>%   
+      group_by('Pitch' = TaggedPitchType) %>%
+      summarize('Pitches' = n(),
+                xwOBA = round(mean(xwOBAvalues[BFCheck == TRUE], na.rm = TRUE), 3),
+                `CSW%` = mean(CSWCheck, na.rm = TRUE), 
+                `Strike%` = mean(StrikeCheck, na.rm = TRUE), 
+                `Zone%` = mean(ZoneCheck, na.rm = TRUE), 
+                `Swing%` = mean(SwingCheck, na.rm = TRUE), 
+                `Chase%` = mean(SwingCheck[ZoneCheck == FALSE], na.rm = TRUE), 
+                `Z-Whiff%` = mean(WhiffCheck[ZoneCheck == TRUE & SwingCheck == TRUE]),
+                `Whiff%` = mean(WhiffCheck[SwingCheck == TRUE], na.rm = TRUE), 
+                `Z-Swing%` = mean(SwingCheck[ZoneCheck == TRUE], na.rm = TRUE),
+                BBE = sum(BattedBallCheck, na.rm = TRUE),
+                xDamage = mean(av_xwOBAcon[BattedBallCheck == TRUE],  na.rm = TRUE),
+                AvgEV = mean(ExitSpeed[BattedBallCheck == TRUE], na.rm = TRUE)) %>% 
+      mutate(`CSW%` = scales::percent(`CSW%`, accuracy = 0.1),
+             `Strike%` = scales::percent(`Strike%`, accuracy = 0.1),
+             `Zone%` = scales::percent(`Zone%`, accuracy = 0.1),
+             `Chase%` = scales::percent(`Chase%`, accuracy = 0.1),
+             `Whiff%` = scales::percent(`Whiff%`, accuracy = 0.1),
+             `Z-Whiff%` = scales::percent(`Z-Whiff%`, accuracy = 0.1),
+             `Z-Swing%` = scales::percent(`Z-Swing%`, accuracy = 0.1),
+             `Swing%` = scales::percent(`Swing%`, accuracy = 0.1),
+             xDamage = sprintf("%.3f", xDamage),
+             xwOBA = sprintf("%.3f", xwOBA),
+             AvgEV = sprintf("%.1f", AvgEV)) %>% 
+      select(Pitch, Pitches, `CSW%`, `Zone%`, `Chase%`, `Whiff%`, 
+             `Z-Whiff%`, `Z-Swing%`, `Swing%`, xwOBA, AvgEV, xDamage)
+     
+
+# Assuming summary_table, pitch_types_table, usage_table_side are data frames
+summary_table_grob <- tableGrob(summary_table)
+pitch_types_table_grob <- tableGrob(pitch_types_table)
+usage_table_side_grob <- tableGrob(usage_table_side)
+advanced_grob = tableGrob(advanced)
+
+
+# Combine plots and tables
+fig <- ggarrange(
+  summary_table_grob,
+  pitch_types_table_grob,
+  usage_table_side_grob,
+  advanced_grob,
+  #movement,  #opted not to use the movement plot
+  ncol = 1, nrow = 4
+)
+
+# Annotate the figure
+ann_fig <- annotate_figure(
+  fig, 
+  top = text_grob(paste0(pitcher_name, " - ", team_name, " - ", filtered$PitcherThrows))
+)
+
+# Create the directory if it doesn't exist
+dir.create(paste0("~/Desktop/Wareham/Scouting/ScoutReports/", team_name, "/Pitchers/", date), showWarnings = FALSE, recursive = TRUE)
+
+# Create and open the PDF device
+pdf(file = paste0("~/Desktop/Wareham/Scouting/ScoutReports/", team_name, "/Pitchers/", date, "/" , pitcher_last_name, "_Scout_Report.pdf"), width = 11,  # Adjust width as needed
+    height = 8.5)
+
+
+# Print the annotated figure to the PDF
+print(ann_fig)
+
+# Close the PDF device
+dev.off()
+```
+
